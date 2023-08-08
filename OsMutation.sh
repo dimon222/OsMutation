@@ -142,7 +142,7 @@ function replace_os(){
 function post_install(){
     export PATH="/usr/sbin:/usr/bin:/sbin:/bin"
     if grep -qi alpine /etc/issue; then
-        install openssh bash
+        install openssh bash btop ufw openrc
         rc-update add sshd default
         rc-update add mdev sysinit
         rc-update add devfs sysinit
