@@ -143,7 +143,14 @@ function replace_os(){
 function post_install(){
     export PATH="/usr/sbin:/usr/bin:/sbin:/bin"
     if grep -qi alpine /etc/issue; then
-        install openssh bash btop ip6tables ufw openrc ifupdown-ng zsh shadow
+        install openssh bash btop ip6tables ufw openrc ifupdown-ng zsh shadow busybox-openrc
+	# Enable logging
+ 	rc-update add syslog boot
+ 	#
+	# Fix /dev/ nodes
+ 	mknod /dev/1 c 4 1
+	mknod /dev/2 c 4 2
+ 	#
         rc-update add sshd default
         rc-update add devfs sysinit
 	rc-update add networking default
