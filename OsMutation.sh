@@ -56,54 +56,10 @@ function install(){
 }
 
 function read_lxc_template(){
-    last_lxc_version=$(curl -Ls "https://api.github.com/repos/LloydAsp/OsMutation/releases/latest" | grep "LXC" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    if [[ -n $last_lxc_version ]]; then
-        image_list=$(curl -Ls "https://api.github.com/repos/LloydAsp/OsMutation/releases/latest" | grep "LXC" | grep '"browser_download_url":' | sed -E 's/.*"([^"]+)".*/\1/')
-
-        os_list=$(curl -Ls "https://api.github.com/repos/LloydAsp/OsMutation/releases/latest" | grep "LXC" | grep '"browser_download_url":' | sed -E 's/.*"([^"]+)".*/\1/' | sed "s/https\:\/\/github.com\/LloydAsp\/OsMutation\/releases\/download\/${last_lxc_version}\///g" | sed "s/\.tar\.gz//g")
-        echo "$os_list" | nl
-
-        while [ -z "${os_index##*[!0-9]*}" ]; do
-            echo -ne "\e[1;33mplease select os (input number):\e[m"
-            read os_index < /dev/tty
-        done
-
-        download_link=$(echo "$image_list" | head -n $os_index | tail -n 1)
-    else
-        server=http://images.linuxcontainers.org
-        path=$(wget -qO- ${server}/meta/1.0/index-system | \
-            grep -v edge | grep default | \
-            awk '-F;' '(( $1=="debian" || $1=="centos" || $1=="alpine") && ( $3=="amd64" || $3=="i386")) {print $NF}')
-
-        os_list=$( echo "$path" | sed -E 's%/images/(.*)/default/.*/%\1%g' | sed 's%/%-%g' )
-        echo "$os_list" | nl
-
-        while [ -z "${os_index##*[!0-9]*}" ]; do
-            echo -ne "\e[1;33mplease select os (input number):\e[m"
-            read os_index < /dev/tty
-        done
-
-        path=$( echo "$path" | head -n $os_index | tail -n 1)
-        os_selected=$(echo "$os_list" | head -n $os_index | tail -n 1 )
-        download_link=${server}/${path}/rootfs.tar.xz
-    fi
 }
 
 function read_openvz_template(){
-    releasetag="v0.0.1"
-    os_list=$(wget -qO- "https://github.com/LloydAsp/OsMutation/releases/expanded_assets/v0.0.1" | \
-        sed -nE '/tar.gz/s/.*>([^<>]+)\.tar\.gz.*/\1/p' | \
-        grep -E "(debian)|(centos)|(alpine)" )
-    echo "$os_list" | nl
-
-    while [ -z "${os_index##*[!0-9]*}" ]; 
-    do
-        echo -n "please select os (input number):"
-        read os_index < /dev/tty
-    done
-
-    os_selected=$( echo "$os_list" | head -n $os_index | tail -n 1)
-    download_link="https://github.com/LloydAsp/OsMutation/releases/download/${releasetag}/${os_selected}.tar.gz"
+    download_link="https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/x86_64/alpine-minirootfs-3.18.3-x86_64.tar.gz"
 }
 
 function download_rootfs(){
