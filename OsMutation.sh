@@ -56,6 +56,7 @@ function install(){
 }
 
 function read_lxc_template(){
+    echo "Hi"
 }
 
 function read_openvz_template(){
@@ -142,13 +143,11 @@ function replace_os(){
 function post_install(){
     export PATH="/usr/sbin:/usr/bin:/sbin:/bin"
     if grep -qi alpine /etc/issue; then
-        install openssh bash btop ufw openrc
+        install openssh bash btop ufw openrc ifupdown-ng
         rc-update add sshd default
-        rc-update add mdev sysinit
         rc-update add devfs sysinit
+	rc-update add networking default
         if [ "$cttype" == 'lxc' ] ; then
-            apk add ifupdown-ng
-            rc-update add networking default
             sed -i 's/--auto/-a/' /etc/init.d/networking # fix bug in networking script of lxc
         fi
     elif grep -qi debian /etc/issue; then
