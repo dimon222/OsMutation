@@ -56,66 +56,16 @@ function install(){
 }
 
 function read_lxc_template(){
-    last_lxc_version=$(curl -Ls "https://api.github.com/repos/LloydAsp/OsMutation/releases/latest" | grep "LXC" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    if [[ -n $last_lxc_version ]]; then
-        image_list=$(curl -Ls "https://api.github.com/repos/LloydAsp/OsMutation/releases/latest" | grep "LXC" | grep '"browser_download_url":' | sed -E 's/.*"([^"]+)".*/\1/')
-
-        os_list=$(curl -Ls "https://api.github.com/repos/LloydAsp/OsMutation/releases/latest" | grep "LXC" | grep '"browser_download_url":' | sed -E 's/.*"([^"]+)".*/\1/' | sed "s/https\:\/\/github.com\/LloydAsp\/OsMutation\/releases\/download\/${last_lxc_version}\///g" | sed "s/\.tar\.gz//g")
-        echo "$os_list" | nl
-
-        while [ -z "${os_index##*[!0-9]*}" ]; do
-            echo -ne "\e[1;33mplease select os (input number):\e[m"
-            read os_index
-        done
-
-        download_link=$(echo "$image_list" | head -n $os_index | tail -n 1)
-    else
-        server=http://images.linuxcontainers.org
-        path=$(wget -qO- ${server}/meta/1.0/index-system | \
-            grep -v edge | grep default | \
-            awk '-F;' '(( $1=="debian" || $1=="centos" || $1=="alpine") && ( $3=="amd64" || $3=="i386")) {print $NF}')
-
-        os_list=$( echo "$path" | sed -E 's%/images/(.*)/default/.*/%\1%g' | sed 's%/%-%g' )
-        echo "$os_list" | nl
-
-        while [ -z "${os_index##*[!0-9]*}" ]; do
-            echo -ne "\e[1;33mplease select os (input number):\e[m"
-            read os_index 
-        done
-
-        path=$( echo "$path" | head -n $os_index | tail -n 1)
-        os_selected=$(echo "$os_list" | head -n $os_index | tail -n 1 )
-        download_link=${server}/${path}/rootfs.tar.xz
-    fi
+    download_link="https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/x86_64/alpine-minirootfs-3.18.3-x86_64.tar.gz"
 }
 
-function read_openvz_template(){
-    releasetag="v0.0.1"
-    os_list=$(wget -qO- "https://github.com/LloydAsp/OsMutation/releases/expanded_assets/v0.0.1" | \
-        sed -nE '/tar.gz/s/.*>([^<>]+)\.tar\.gz.*/\1/p' | \
-        grep -E "(debian)|(centos)|(alpine)" )
-    echo "$os_list" | nl
-
-    while [ -z "${os_index##*[!0-9]*}" ]; 
-    do
-        echo -n "please select os (input number):"
-        read os_index
-    done
-
-    os_selected=$( echo "$os_list" | head -n $os_index | tail -n 1)
-    download_link="https://github.com/LloydAsp/OsMutation/releases/download/${releasetag}/${os_selected}.tar.gz"
-}
 
 function download_rootfs(){
     cd /oldroot;
     rm -rf $(ls /oldroot | grep -vE "(^dev|^proc|^sys|^run|^x)") ;
 
-    if [ "$cttype" == 'lxc' ] ; then
-        #rootfs.tar.xz
-        wget -qO- $download_link | tar -C /oldroot -xJv --delay-directory-restore --exclude="dev" --exclude="proc" --exclude="run" --exclude="sys"
-    else
-        wget -qO- $download_link | tar -C /oldroot -xzv --delay-directory-restore --exclude="dev" --exclude="proc" --exclude="run" --exclude="sys"
-    fi
+    #rootfs.tar.xz
+    wget -qO- $download_link | tar -C /oldroot -xJv --delay-directory-restore --exclude="dev" --exclude="proc" --exclude="run" --exclude="sys"
 }
 
 
@@ -124,7 +74,9 @@ function migrate_configuration(){
     # save root password and ssh directory
     sed -i '/^root:/d' "/$dest_os_dir/etc/shadow"
     grep '^root:' /etc/shadow >> "/$dest_os_dir/etc/shadow"
-    [ -d /root/.ssh ] && cp -a cp -a "/root/.ssh" "/$dest_os_dir/root/"
+    [ -d /root/.ssh ] && cp -a "/root/.ssh" "/$dest_os_dir/root/"
+    mkdir -p "/$dest_os_dir/etc/udev/rules.d/"
+    [ -f /etc/udev/rules.d/70-persistent-net.rules ] && cp -a "/etc/udev/rules.d/70-persistent-net.rules" "/$dest_os_dir/etc/udev/rules.d/70-persistent-net.rules"
 
     # save network configuration
     dev=$(ip route get 8.8.8.8 | sed -n 's/.*dev \([^\ ]*\).*/\1/p' | head -n 1)
@@ -165,43 +117,84 @@ function chroot_run(){
     chroot "/x/" /bin/bash -c "$*"
 }
 
+change_hostname() {
+    local new_hostname="$1"
+    local os_release
+
+    # Detect the Linux distribution
+    if [ -f "/etc/alpine-release" ]; then
+        os_release="alpine"
+    elif [ -f "/etc/debian_version" ]; then
+        os_release="debian"
+    elif [ -f "/etc/centos-release" ]; then
+        os_release="centos"
+    else
+        echo "Unsupported Linux distribution."
+        return 1
+    fi
+
+    # Change hostname based on distribution
+    case "$os_release" in
+        "alpine")
+            echo "$new_hostname" > /etc/hostname
+            hostname -F /etc/hostname
+            ;;
+        "debian")
+            echo "$new_hostname" > /etc/hostname
+            hostnamectl set-hostname "$new_hostname"
+            ;;
+        "centos")
+            echo "NETWORKING=yes" > /etc/sysconfig/network
+            echo "HOSTNAME=$new_hostname" >> /etc/sysconfig/network
+            hostnamectl set-hostname "$new_hostname"
+            ;;
+    esac
+
+    echo "Hostname changed to $new_hostname. Please restart your system to apply changes."
+}
+
+
 function post_install(){
     export PATH="/usr/sbin:/usr/bin:/sbin:/bin"
+
+    root_partition="$(df / | awk 'NR==2 {print $1}')"
+    root_partition_type="$(df -T / | awk 'NR==2 {print $2}')"
+    target_disk=$(echo "$root_partition" | sed 's/[0-9]*$//')
+    echo "$root_partition /               $root_partition_type   defaults    0       1" > /etc/fstab
+    mkdir -p /boot/grub
+
     if grep -qi alpine /etc/issue; then
         install openssh bash
         rc-update add sshd default
         rc-update add mdev sysinit
         rc-update add devfs sysinit
-        if grep -qa container=lxc /proc/1/environ ; then
-            apk add ifupdown-ng
-            rc-update add networking default
-            sed -i 's/--auto/-a/' /etc/init.d/networking # fix bug in networking script of lxc
-        fi
+        apk add ifupdown-ng
+        rc-update add networking default
+        sed -i 's/--auto/-a/' /etc/init.d/networking # fix bug in networking script of lxc
+        change_hostname alpine
+        install grub grub-bios linux-lts
+        echo 'GRUB_CMDLINE_LINUX_DEFAULT="quiet rootfstype=ext4 modules=sd-mod,usb-storage,ext4"' >> /etc/default/grub
+        grub-mkconfig -o /boot/grub/grub.cfg
     elif grep -qi debian /etc/issue; then
-        install ssh
-        if grep -qa container=lxc /proc/1/environ ; then
-            install ifupdown
-            systemctl disable systemd-networkd.service
-        fi
+        install ssh ifupdown
+        systemctl disable systemd-networkd.service
+        change_hostname debian
+        install fdisk linux-image-generic grub-pc
+        grub-install "$target_disk"
+        update-grub
+        #upgrade-from-grub-legacy
     elif grep -qi centos /etc/issue; then
-        install openssh
-        if grep -qa container=lxc /proc/1/environ ; then
-            install ifupdown
-            systemctl disable systemd-networkd.service
-            # To-Do: Network service of CentOS need modify
-        fi
+        install openssh ifupdown
+        systemctl disable systemd-networkd.service
+        change_hostname centos
+        install fdisk linux-image-generic grub-pc
+        grub-install "$target_disk"
+        update-grub
+        #upgrade-from-grub-legacy
     fi
     echo PermitRootLogin yes >> /etc/ssh/sshd_config
     rm -rf /x
     sync
-    while [ "$reboot_ans" != 'yes' -a "$reboot_ans" != 'no' ] ; do
-        echo -ne "\e[1;33mreboot now? (yes/no):\e[m"
-        read reboot_ans  < /dev/tty
-    done
-
-    if [ "$reboot_ans" == 'yes' ] ; then
-        reboot -f
-    fi
 }
 
 function install_requirement(){
@@ -212,18 +205,24 @@ function install_requirement(){
     fi
 }
 
+function clean_old_system(){
+    pkill -9 -f systemd
+    # and all remaining process using kill -9 PID PID PID PID PID PID ... EXCEPT the SSH you're actually using!
+    # 这里好像还需要清理其他进程才行
+    while true; do
+        (mount | tac | grep oldroot | cut -d' ' -f3 | xargs umount) || break
+    done
+}
+
 function main(){
     print_help
     echo -e '\e[1;32minstall requirement...\e[m'
     install_requirement
-    read_virt_tech
 
-    if [ "$cttype" == 'lxc' ] ; then
-        read_lxc_template
-    else
-        read_openvz_template
-    fi
+    read_lxc_template
 
+    echo -e '\e[1;32mClean old system\e[m'
+    clean_old_system
 
     echo -e '\e[1;32mdownloading template...\e[m'
     download_rootfs
@@ -236,8 +235,9 @@ function make_temp_os(){
     # prevent no access on ipv6 only vps
     ping -c 3 api.github.com || echo "nameserver 2a00:1098:2c::1"  >  /etc/resolv.conf 
     
-    temp_os_url="https://github.com/LloydAsp/OsMutation/releases/download/utils/alpine-3.18-chroot.tar.gz"
-    mkdir /x
+    temp_os_url='https://github.com/LloydAsp/templates/releases/download/v1.0.0/alpine-takeover.tar.gz'
+    mkdir -p /x
+    mount -t tmpfs tmpfs /x -o size=150M
     if [ -n "$(command -v wget)" ] ; then
         wget -qO- $temp_os_url | tar -C /x -xz
     elif [ -n "$(command -v curl)" ] ; then
@@ -246,24 +246,50 @@ function make_temp_os(){
         install wget
         wget -qO- $temp_os_url | tar -C /x -xz
     fi
+    
+    mv /x/takeover/* /x
 
     # backup configuration
     migrate_configuration x
 
-    cp OsMutation.sh /x/
-    mkdir /x/oldroot
-    mount --bind / /x/oldroot
-    chroot_run env main=1 ./OsMutation.sh
-    umount /x/oldroot
+    # don't run follow
+    cp OsMutationKvm.sh /x/
+    cp OsMutationKvm.sh /
+
+    cd /x
+    curl -qo takeover.sh https://raw.githubusercontent.com/LloydAsp/OsMutation/main/takeover.sh
+    chmod u+x takeover.sh
+    ./takeover.sh
+    # Note: disk entry "/" has changed now.
+
+    /busybox chroot . apk add bash
+    /busybox chroot . env main=1 /OsMutationKvm.sh
 
     echo -e '\e[1;32mpost processing...\e[m'
-    post_install
+    /busybox cp /OsMutationKvm.sh /oldroot
+    /busybox chroot /oldroot apk add bash &> /dev/null # for alpine
+    /busybox chroot /oldroot env postinstall=1 /OsMutationKvm.sh
+
+    while [ "$reboot_ans" != 'yes' -a "$reboot_ans" != 'no' ] ; do
+        echo -ne "\e[1;33mreboot now? (yes/no):\e[m"
+        read reboot_ans
+    done
+
+    if [ "$reboot_ans" == 'yes' ] ; then
+        reboot -f
+    fi
 }
 
 
-if [ -z "$main" ]; then
-    make_temp_os 2>&1 | tee reinstall.log
+if [ -n "$main" ]; then
+    main
     exit 0
 fi
 
-main
+if [ -n "$postinstall" ]; then
+    post_install 2>&1 | tee reinstall.log
+    exit 0
+fi
+
+
+make_temp_os 2>&1 | tee reinstall.log

@@ -27,8 +27,8 @@ function read_virt_tech(){
     if [[ $cttype == "lxc" || $cttype == "openvz" ]]; then
         [[ $cttype == "lxc" ]] && echo -e '\e[1;33mYour container type: lxc\e[m' || echo -e '\e[1;33mYour container type: openvz\e[m'
     else
-        while [ "$cttype" != 'lxc' -a "$cttype" != 'openvz' ] ; do
-            echo -ne "\e[1;33mplease input container type (lxc/openvz):\e[m"
+        while [ "$cttype" != 'lxc' -a "$cttype" != 'openvz' -a "$cttype" != 'kvm' ] ; do
+            echo -ne "\e[1;33mplease input container type (lxc/openvz/kvm):\e[m"
             read cttype  < /dev/tty
         done
     fi
@@ -70,9 +70,12 @@ function download_rootfs(){
     if [ "$cttype" == 'lxc' ] ; then
         #rootfs.tar.xz
         wget -qO- $download_link | tar -C /x -xJv
-    else
+    elif [ "$cttype" == 'openvz' ] ; then
         #rootfs.tar.gz
         wget -qO- $download_link | tar -C /x -xzv
+    elif [ "$cttype" == 'kvm' ] ; then
+       echo "kvm is not supported by this script"
+       exit 1
     fi
 }
 
@@ -116,6 +119,9 @@ function migrate_configuration(){
 }
 
 function install_requirement(){
+    # prevent no access on ipv6 only vps
+    ping -c 3 api.github.com || echo "nameserver 2a00:1098:2c::1"  >  /etc/resolv.conf 
+    
     if [ -n "$(command -v apk)" ] ; then
         install curl sed gawk wget gzip xz tar virt-what
     else
@@ -201,10 +207,15 @@ function main(){
     install_requirement
     read_virt_tech
 
-    if [ "$cttype" == 'lxc' ] ; then
-        read_lxc_template
-    else
+    if [ "$cttype" == 'openvz' ] ; then
         read_openvz_template
+    elif [ "$cttype" == 'lxc' ] ; then
+        read_lxc_template
+    elif [ "$cttype" == 'kvm' ] ; then
+        curl -qo OsMutationKvm.sh https://raw.githubusercontent.com/LloydAsp/OsMutation/main/OsMutationKvm.sh
+        chmod u+x OsMutationKvm.sh
+        ./OsMutationKvm.sh
+        exit 0
     fi
 
     echo -e '\e[1;32mdownloading template...\e[m'
